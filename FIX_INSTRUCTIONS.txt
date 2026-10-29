@@ -1,0 +1,21 @@
+DropMesh v0.3.1 test-discovery fix
+
+Purpose: prevent Vitest from treating Node-native test suites as Vitest tests.
+This patch changes only Vitest configuration; it DOES NOT fix npm audit vulnerabilities.
+
+Apply (Mac Terminal):
+cd ~/Downloads/dropmesh-v0.3-deploy-ready
+unzip -o ~/Downloads/dropmesh-v0.3.2-test-fix-patch.zip -d .
+npm test
+
+Then review dependency warnings:
+npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
+
+Do NOT run npm audit fix --force blindly; it permits breaking major updates.
+When all tests pass, consider npm audit fix (without --force), then re-run npm test, and check npm audit again.
+For high/critical issues requiring a major update, upgrade affected direct dependencies deliberately and retest.
+To verify production build (example URL only):
+VITE_SIGNAL_URL=wss://example.invalid/signal npm run build
+
+Do not publish until critical/high audit issues are resolved and build/integration checks pass.

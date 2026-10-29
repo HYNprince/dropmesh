@@ -1,0 +1,38 @@
+{
+  "name": "dropmesh",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "node scripts/check-deploy.mjs && tsc -b && vite build",
+    "preview": "vite preview",
+    "signal": "node server/index.js",
+    "test": "npm run test:native && npm run test:unit && npm run test:server",
+    "test:native": "node --experimental-strip-types --test tests/*.native.test.mjs",
+    "test:unit": "vitest run",
+    "test:server": "node --test tests/*.test.js",
+    "check:deploy": "node scripts/check-deploy.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "@types/qrcode": "^1.5.5",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=22.16.0 <27"
+  }
+}
