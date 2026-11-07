@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#101a25" />
+  <meta name="description" content="Portfolio of V. Gokulbalaji, a first-year CSE student working on browser file sharing, Android music software and web communities." />
+  <title>V. Gokulbalaji — Software Projects</title>
+  <style>
+    :root{--ink:#e8edf1;--muted:#a1b0c1;--line:#31404f;--bg:#101a25;--panel:#172535;--aqua:#75e4ca;--amber:#ffc98b;--focus:#f8d87c}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    a{color:var(--aqua)}a:hover{text-decoration-thickness:2px}a:focus-visible{outline:3px solid var(--focus);outline-offset:4px;border-radius:4px}
+    .shell{width:min(1100px,calc(100% - 40px));margin:auto}header{border-bottom:1px solid var(--line)}
+    nav{display:flex;justify-content:space-between;align-items:center;gap:20px;min-height:84px}
+    .brand{font-weight:750;letter-spacing:-.02em;color:#fff;text-decoration:none;font-size:1.13rem}
+    .links{display:flex;gap:20px;flex-wrap:wrap}.links a{color:var(--muted);text-decoration:none;font-weight:600}
+    main{padding-bottom:65px}.hero{padding:86px 0 60px;display:grid;grid-template-columns:1.4fr .6fr;align-items:center;gap:30px}
+    .eyebrow{color:var(--aqua);letter-spacing:.18em;font-size:.78rem;font-weight:800;text-transform:uppercase}
+    h1{font-size:clamp(2.7rem,7vw,5.6rem);line-height:1.06;letter-spacing:-.06em;margin:18px 0 22px}
+    h2{font-size:clamp(1.65rem,3vw,2.4rem);letter-spacing:-.04em;line-height:1.18}
+    h3{font-size:1.32rem;letter-spacing:-.025em;margin:0 0 4px}
+    p{margin:0 0 18px}.lead{font-size:1.16rem;color:var(--muted);max-width:650px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+    .btn{display:inline-block;padding:11px 18px;border-radius:9px;background:var(--aqua);color:#10232a;text-decoration:none;font-weight:750}
+    .btn.secondary{background:transparent;border:1px solid #668092;color:var(--ink)}
+    .glyph{width:220px;height:220px;border-radius:30px;display:grid;place-items:center;background:linear-gradient(145deg,#214955,#4b3c62);border:1px solid #61798a;font-size:7rem;box-shadow:17px 17px 0 #11222b;transform:rotate(7deg)}
+    section{padding:36px 0}section>p{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:26px}
+    article{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:25px;display:flex;flex-direction:column}
+    .label{color:var(--amber);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;margin-bottom:12px}
+    article p{color:var(--muted);flex:1;font-size:.96rem}.stack{color:#bed0dd;font-size:.86rem;margin-bottom:18px}
+    .inline-link{font-weight:700;text-decoration-thickness:1px;text-underline-offset:4px}
+    .note{border:1px solid var(--line);padding:22px 26px;border-radius:14px;background:#132331;color:var(--muted)}
+    footer{border-top:1px solid var(--line);padding:28px 0;color:var(--muted);font-size:.9rem}
+    @media(max-width:850px){.grid{grid-template-columns:1fr 1fr}.hero{grid-template-columns:1fr}.glyph{display:none}}
+    @media(max-width:550px){.grid{grid-template-columns:1fr}nav{align-items:flex-start;padding:18px 0;flex-direction:column;gap:9px}.hero{padding:58px 0 36px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="shell" aria-label="Main navigation">
+      <a class="brand" href="#home">VG / BUILD LOG</a>
+      <div class="links"><a href="#work">Projects</a><a href="#about">About</a><a href="https://github.com/HYNprince" rel="noopener noreferrer">GitHub</a></div>
+    </nav>
+  </header>
+  <main class="shell" id="home">
+    <div class="hero">
+      <div>
+        <div class="eyebrow">First-year B.E. CSE · KPRIET</div>
+        <h1>Hi, I'm<br />Gokulbalaji.</h1>
+        <p class="lead">I learn by building software: a peer-to-peer file-sharing prototype, an Android music-player project, and interactive social web experiments.</p>
+        <div class="actions">
+          <a class="btn" href="#work">Explore my projects</a>
+          <a class="btn secondary" href="https://github.com/HYNprince" rel="noopener noreferrer">See source on GitHub</a>
+        </div>
+      </div>
+      <div class="glyph" aria-hidden="true">⌘</div>
+    </div>
+    <section id="work" aria-labelledby="work-heading">
+      <div class="eyebrow">Selected work</div>
+      <h2 id="work-heading">Projects and engineering practice</h2>
+      <p>Real repositories, clear progress labels and transparent limitations.</p>
+      <div class="grid">
+        <article>
+          <div class="label">Web app · Prototype</div>
+          <h3>DropMesh</h3>
+          <p>A browser-based peer file-transfer prototype with QR/room-code pairing, WebRTC data channels, receiver consent and SHA-256 integrity checking. Live deployment and security readiness are under verification.</p>
+          <div class="stack">React · TypeScript · Vite · WebRTC · Node.js</div>
+          <a class="inline-link" href="https://github.com/HYNprince/dropmesh" rel="noopener noreferrer">Explore DropMesh source</a>
+        </article>
+        <article>
+          <div class="label">Android · In development</div>
+          <h3>Gmac / Pulse Music</h3>
+          <p>Android music-app development and experiments using Kotlin. The repository contains a starter project and feature branches; MetroList-derived work is credited to its original project under applicable licence terms.</p>
+          <div class="stack">Kotlin · Jetpack Compose · Android</div>
+          <a class="inline-link" href="https://github.com/HYNprince/pulse-music-android-2026" rel="noopener noreferrer">Explore Android repository</a>
+        </article>
+        <article>
+          <div class="label">Web community · Beta</div>
+          <h3>DIGO</h3>
+          <p>A chat-first mini-game web community prototype with rooms, interactions and moderation experiments. The README documents what is demo-only and what still requires live verification.</p>
+          <div class="stack">HTML · JavaScript · Supabase experiments</div>
+          <a class="inline-link" href="https://github.com/HYNprince/DIGO" rel="noopener noreferrer">Explore DIGO repository</a>
+        </article>
+      </div>
+    </section>
+    <section id="about" aria-labelledby="about-heading">
+      <div class="eyebrow">About and skills</div>
+      <h2 id="about-heading">Learning in public, testing before claiming.</h2>
+      <p>I'm a first-year computer science student at KPR Institute of Engineering and Technology, Coimbatore. I use projects to practice frontend implementation, networking concepts, deployment workflows and debugging.</p>
+      <div class="note">
+        <strong>Focus areas:</strong> Web development, Git/GitHub, TypeScript/JavaScript, Kotlin/Android, deployment, testing and practical project documentation.
+        <p style="margin:12px 0 0">This portfolio only links to public source repositories. Certifications, awards and official assessment scores will be added when independently verifiable.</p>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="shell">V. Gokulbalaji · Software project portfolio · <a href="https://github.com/HYNprince" rel="noopener noreferrer">github.com/HYNprince</a></div>
+  </footer>
+</body>
+</html>
