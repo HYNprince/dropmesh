@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  codeFromHash, isValidCode, pairingUrl, parseMeta, sanitizeFileName, sha256Hex, verifyReceivedParts, MAX_FILE,
+  codeFromHash, isValidCode, pairingUrl, parseMeta, sanitizeFileName, sha256Hex, verifyReceivedParts, MAX_FILE, MAX_BATCH_BYTES, MAX_BATCH_FILES, validateFileSelection,
 } from '../src/lib/protocol.ts';
 
 const abcDigest = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
@@ -56,4 +56,15 @@ test('zero-byte file passes integrity verification', async () => {
 test('unsafe filename characters are sanitized before sending', () => {
   assert.equal(sanitizeFileName('folder/secret\\name.txt'), 'folder_secret_name.txt');
   assert.equal(sanitizeFileName('\u202e'), 'unnamed-file');
+});
+
+test('multi-file validation enforces file/count/total byte limits', () => {
+  assert.equal(validateFileSelection([{ size: 2 }, { size: 0 }]), null);
+  assert.match(validateFileSelection([]), /at least one/i);
+  assert.match(validateFileSelection(Array.from({ length: MAX_BATCH_FILES + 1 }, () => ({ size: 1 }))), /at most/i);
+  assert.match(validateFileSelection([{ size: MAX_FILE + 1 }]), /each file/i);
+  assert.match(validateFileSelection([{ size: MAX_FILE }, { size: MAX_FILE }, { size: 1 }]), /total batch/i);
+  assert.equal(validateFileSelection([{ size: MAX_BATCH_BYTES / 2 }, { size: MAX_BATCH_BYTES / 2 }]), null);
+  assert.match(validateFileSelection([{ size: -1 }]), /each file/i);
+  assert.match(validateFileSelection([{ size: NaN }]), /each file/i);
 });

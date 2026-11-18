@@ -21,3 +21,12 @@
 ## Responsible testing
 
 Only test with files you own or have explicit permission to send. Report security problems privately to the maintainers before disclosure. No contact address is bundled; add a monitored security contact before public release.
+
+## v0.4 multi-file limitations
+
+The batch selector limits 20 files, 100 MiB each, and 200 MiB total. The receiver caps
+retained downloads in a session by count and total bytes. Every file receives individual
+consent and independent size/digest verification. Inbound files are buffered and verified
+download Blob URLs remain in memory until session reset. Large batches can stress mobile
+memory; use harmless test data only. SHA-256 is not malware scanning or identity proof.
+No browser-to-browser security or large-batch stress audit is claimed.

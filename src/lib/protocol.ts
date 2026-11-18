@@ -1,4 +1,6 @@
 export const MAX_FILE = 100 * 1024 * 1024;
+export const MAX_BATCH_FILES = 20;
+export const MAX_BATCH_BYTES = 200 * 1024 * 1024;
 export const CHUNK_SIZE = 16 * 1024;
 export const MAX_BUFFERED = 256 * 1024;
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -49,4 +51,19 @@ export async function verifyReceivedParts(parts: BlobPart[], meta: FileMeta): Pr
   const actual = await sha256Hex(blob);
   if (actual !== meta.sha256) throw new Error('SHA-256 mismatch; corrupted file rejected.');
   return blob;
+}
+
+/** The single-file cap still applies; a batch is also bounded in count and aggregate bytes. */
+export function validateFileSelection(files: ReadonlyArray<{ size: number }>): string | null {
+  if (files.length === 0) return 'Choose at least one file.';
+  if (files.length > MAX_BATCH_FILES) return `Select at most ${MAX_BATCH_FILES} files per batch.`;
+  let total = 0;
+  for (const file of files) {
+    if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE) {
+      return 'Each file must be no larger than 100 MiB.';
+    }
+    total += file.size;
+    if (total > MAX_BATCH_BYTES) return 'Total batch size must be 200 MiB or less.';
+  }
+  return null;
 }
