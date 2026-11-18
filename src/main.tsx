@@ -6,8 +6,8 @@ import {
   Link2, LockKeyhole, MousePointerClick, QrCode, ScanLine, Send, ShieldCheck, Smartphone, Sparkles, Star, X, Zap,
 } from 'lucide-react';
 import {
-  CHUNK_SIZE, MAX_BUFFERED, MAX_FILE, ROOM_LENGTH, codeFromHash,
-  humanSize, isValidCode, pairingUrl, parseMeta, sanitizeFileName, sha256Hex, verifyReceivedParts,
+  CHUNK_SIZE, MAX_BUFFERED, MAX_BATCH_BYTES, MAX_BATCH_FILES, ROOM_LENGTH, codeFromHash,
+  humanSize, isValidCode, pairingUrl, parseMeta, sanitizeFileName, sha256Hex, verifyReceivedParts, validateFileSelection,
   type FileMeta,
 } from './lib/protocol';
 import './style.css';
@@ -17,14 +17,18 @@ type Transfer = '' | 'hashing' | 'offered' | 'sending' | 'receiving' | 'verifyin
 type Signal = { type: 'offer' | 'answer' | 'candidate'; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
 type ServerMessage = { type: string; room?: string; initiator?: boolean; data?: Signal; message?: string };
 type Control = { type: string; id?: string } & Record<string, unknown>;
-type Outbound = { meta: FileMeta; file: File; started: boolean };
+type Outbound = { meta: FileMeta; file: File; started: boolean; index: number };
+type QueueStage = 'queued' | 'hashing' | 'offered' | 'sending' | 'awaiting' | 'verified' | 'rejected' | 'failed';
+type QueueItem = { name: string; size: number; stage: QueueStage; progress: number };
+type Batch = { files: File[]; next: number; busy: boolean };
+type ReceivedItem = { id: string; name: string; url: string; sha256: string; size: number };
 type Inbound = { meta: FileMeta; approved: boolean; parts: BlobPart[]; bytes: number; verifying: boolean };
 
 // Never silently connect a publicly deployed page to the visitor's own localhost.
 // Local development still works without a .env file.
 const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || (import.meta.env.DEV ? 'ws://localhost:8787/signal' : '');
 function validateSignalUrl(): string | null {
-  if (!SIGNAL_URL) return 'DropMesh signaling is not configured. Set VITE_SIGNAL_URL to your hosted WSS endpoint and redeploy.';
+  if (!SIGNAL_URL) return 'dropmess signaling is not configured. Set VITE_SIGNAL_URL to your hosted WSS endpoint and redeploy.';
   try {
     const parsed = new URL(SIGNAL_URL);
     if (parsed.pathname !== '/signal' || parsed.search || parsed.hash) return 'Signaling URL must end with /signal and have no query or fragment.';
@@ -42,8 +46,9 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [transfer, setTransfer] = useState<Transfer>('');
   const [incoming, setIncoming] = useState<FileMeta | null>(null);
-  const [received, setReceived] = useState<{ name: string; url: string; sha256: string } | null>(null);
-  const [selected, setSelected] = useState<File | null>(null);
+  const [receivedFiles, setReceivedFiles] = useState<ReceivedItem[]>([]);
+  const [selected, setSelected] = useState<File[]>([]);
+  const [queueRows, setQueueRows] = useState<QueueItem[]>([]);
   const [qr, setQr] = useState('');
   const [pairLink, setPairLink] = useState('');
   const [verifiedDigest, setVerifiedDigest] = useState('');
@@ -55,7 +60,9 @@ function App() {
   const outbound = useRef<Outbound | null>(null);
   const inbound = useRef<Inbound | null>(null);
   const cancelled = useRef(false);
-  const downloadUrl = useRef('');
+  const downloadUrls = useRef<string[]>([]);
+  const receivedBytes = useRef(0);
+  const batch = useRef<Batch | null>(null);
   const connectionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -66,13 +73,27 @@ function App() {
     peerTimer.current = null;
   }
   function clearReceived() {
-    if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
-    downloadUrl.current = '';
-    setReceived(null);
+    for (const url of downloadUrls.current) URL.revokeObjectURL(url);
+    downloadUrls.current = [];
+    receivedBytes.current = 0;
+    setReceivedFiles([]);
     setVerifiedDigest('');
+  }
+  function markQueue(index: number, stage: QueueStage, progress?: number) {
+    setQueueRows(rows => rows.map((item, i) => i === index
+      ? { ...item, stage, progress: progress ?? item.progress }
+      : item));
+  }
+  function stopBatch() {
+    batch.current = null;
+    setQueueRows(rows => rows.map(item =>
+      ['queued', 'hashing', 'offered', 'sending', 'awaiting'].includes(item.stage)
+        ? { ...item, stage: 'failed' as const }
+        : item));
   }
   function resetTransfer() {
     cancelled.current = true;
+    stopBatch();
     outbound.current = null;
     inbound.current = null;
     setIncoming(null);
@@ -101,7 +122,7 @@ function App() {
       dc.current?.close();
       pc.current?.close();
       ws.current?.close();
-      if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
+      for (const url of downloadUrls.current) URL.revokeObjectURL(url);
     };
   }, []);
   useEffect(() => {
@@ -152,14 +173,17 @@ function App() {
       record.parts = [];
       inbound.current = null;
       setIncoming(null);
-      clearReceived();
       const url = URL.createObjectURL(blob);
-      downloadUrl.current = url;
-      setReceived({ name: record.meta.name, url, sha256: actual });
+      downloadUrls.current.push(url);
+      receivedBytes.current += blob.size;
+      setReceivedFiles(previous => [...previous, {
+        id: record.meta.id, name: record.meta.name, url, sha256: actual, size: blob.size,
+      }]);
       setVerifiedDigest(actual);
       setTransfer('complete');
       setProgress(100);
       sendControl({ type: 'verified', id: record.meta.id });
+      void offerNextFile();
     } catch (err) {
       if (inbound.current === record) {
         inbound.current = null;
@@ -167,6 +191,7 @@ function App() {
         setTransfer('');
         setError(err instanceof Error ? err.message : 'Could not verify the received file');
         sendControl({ type: 'integrity-failed', id: record.meta.id });
+        void offerNextFile();
       }
     }
   }
@@ -174,6 +199,7 @@ function App() {
     const channel = dc.current;
     if (!channel || channel.readyState !== 'open' || outbound.current !== record) return;
     setTransfer('sending');
+    markQueue(record.index, 'sending', 0);
     setProgress(0);
     try {
       let offset = 0;
@@ -194,14 +220,22 @@ function App() {
         if (outbound.current !== record || channel.readyState !== 'open') throw new Error('Transfer interrupted');
         channel.send(buffer);
         offset = next;
-        setProgress(Math.round(100 * offset / record.file.size));
+        const pct = Math.round(100 * offset / record.file.size);
+        setProgress(pct);
+        markQueue(record.index, 'sending', pct);
       }
-      if (outbound.current === record) setTransfer('awaiting');
+      if (outbound.current === record) {
+        setTransfer('awaiting');
+        markQueue(record.index, 'awaiting', 100);
+      }
     } catch (err) {
       if (outbound.current === record) {
         outbound.current = null;
+        markQueue(record.index, 'failed');
+        stopBatch();
         setTransfer('');
         setError(err instanceof Error ? err.message : 'Transfer failed');
+        channel.close();
       }
     }
   }
@@ -209,8 +243,11 @@ function App() {
     if (message.type === 'meta') {
       const meta = parseMeta(message);
       if (!meta) { setError('Rejected invalid file metadata'); return; }
-      if (inbound.current || outbound.current) { sendControl({ type: 'reject', id: meta.id }); return; }
-      clearReceived();
+      if (inbound.current || outbound.current ||
+          downloadUrls.current.length >= MAX_BATCH_FILES ||
+          receivedBytes.current + meta.size > MAX_BATCH_BYTES) {
+        sendControl({ type: 'reject', id: meta.id }); return;
+      }
       inbound.current = { meta, approved: false, parts: [], bytes: 0, verifying: false };
       setIncoming(meta);
       setTransfer('');
@@ -226,17 +263,23 @@ function App() {
       void transmit(out);
     } else if (message.type === 'reject' && out?.meta.id === id) {
       outbound.current = null;
+      markQueue(out.index, 'rejected');
       setTransfer('');
-      setError('Receiver declined this file.');
+      setError('Receiver declined ' + out.meta.name + '. Continuing with the next file.');
+      void offerNextFile();
     } else if (message.type === 'verified' && out?.meta.id === id) {
       outbound.current = null;
+      markQueue(out.index, 'verified', 100);
       setProgress(100);
       setTransfer('complete');
       setVerifiedDigest(out.meta.sha256);
+      void offerNextFile();
     } else if (message.type === 'integrity-failed' && out?.meta.id === id) {
       outbound.current = null;
+      markQueue(out.index, 'failed');
+      stopBatch();
       setTransfer('');
-      setError('Receiver reported a SHA-256 mismatch. Transfer rejected.');
+      setError('Receiver reported a SHA-256 mismatch. Batch stopped.');
     }
   }
   function handleBinary(data: ArrayBuffer) {
@@ -282,6 +325,7 @@ function App() {
     cleanup();
     cancelled.current = false;
     clearReceived();
+    setQueueRows([]);
     setRoom('');
     setError('');
     setStatus('connecting');
@@ -380,36 +424,75 @@ function App() {
     clearReceived();
     setStatus('idle');
     setRoom('');
-    setSelected(null);
+    setSelected([]);
+    setQueueRows([]);
     setError('');
   }
-  function chooseFile(file: File | null) {
-    if (file && file.size > MAX_FILE) { setError('Maximum supported file size is 100 MiB.'); return; }
-    setSelected(file);
+  function chooseFiles(files: File[]) {
+    if (batch.current || outbound.current || inbound.current) {
+      setError('Finish the active transfer before changing the selected files.');
+      return;
+    }
+    if (!files.length) { setSelected([]); setQueueRows([]); return; }
+    const problem = validateFileSelection(files);
+    if (problem) { setError(problem); return; }
+    setSelected(files);
+    setQueueRows([]);
     setError('');
   }
-  async function offerFile() {
-    if (status !== 'connected' || !selected || outbound.current || inbound.current || dc.current?.readyState !== 'open') return;
-    cancelled.current = false;
+  async function offerNextFile() {
+    const current = batch.current;
+    if (!current || current.busy || outbound.current || inbound.current || dc.current?.readyState !== 'open') return;
+    if (current.next >= current.files.length) {
+      batch.current = null;
+      setTransfer('complete');
+      return;
+    }
+    current.busy = true;
+    const index = current.next;
+    const file = current.files[index];
     setTransfer('hashing');
+    markQueue(index, 'hashing', 0);
     setError('');
-    setVerifiedDigest('');
     try {
-      const file = selected;
       const sha256 = await sha256Hex(file);
-      if (cancelled.current || dc.current?.readyState !== 'open') return;
+      if (cancelled.current || batch.current !== current || dc.current?.readyState !== 'open') return;
+      if (outbound.current || inbound.current) return;
       const meta: FileMeta = {
-        type: 'meta', id: [...crypto.getRandomValues(new Uint8Array(16))].map(n => n.toString(16).padStart(2, '0')).join(''),
-        name: sanitizeFileName(file.name), size: file.size, mime: (file.type || 'application/octet-stream').slice(0, 120), sha256,
+        type: 'meta',
+        id: [...crypto.getRandomValues(new Uint8Array(16))].map(n => n.toString(16).padStart(2, '0')).join(''),
+        name: sanitizeFileName(file.name), size: file.size,
+        mime: (file.type || 'application/octet-stream').slice(0, 120), sha256,
       };
-      if (inbound.current || outbound.current) { setTransfer(''); setError('Another transfer is already active.'); return; }
-      outbound.current = { meta, file, started: false };
+      outbound.current = { meta, file, started: false, index };
+      current.next += 1;
       setTransfer('offered');
+      markQueue(index, 'offered', 0);
       sendControl(meta);
     } catch (err) {
-      setTransfer('');
-      setError(err instanceof Error ? err.message : 'Could not hash the file');
+      if (batch.current === current) {
+        markQueue(index, 'failed');
+        stopBatch();
+        setTransfer('');
+        setError(err instanceof Error ? err.message : 'Could not hash the file');
+      }
+    } finally {
+      current.busy = false;
     }
+  }
+  function offerFiles() {
+    if (status !== 'connected' || !selected.length || batch.current || outbound.current || inbound.current ||
+        dc.current?.readyState !== 'open') return;
+    const problem = validateFileSelection(selected);
+    if (problem) { setError(problem); return; }
+    cancelled.current = false;
+    setError('');
+    setVerifiedDigest('');
+    setQueueRows(selected.map(file => ({
+      name: file.name, size: file.size, stage: 'queued' as const, progress: 0,
+    })));
+    batch.current = { files: [...selected], next: 0, busy: false };
+    void offerNextFile();
   }
   function approve() {
     const record = inbound.current;
@@ -427,6 +510,7 @@ function App() {
     setIncoming(null);
     setTransfer('');
     sendControl({ type: 'reject', id: record.meta.id });
+    void offerNextFile();
   }
   const statusLabels: Record<Status, string> = {
     idle: 'Not connected', connecting: 'Connecting to signaling server', waiting: 'Waiting for another device',
@@ -437,7 +521,7 @@ function App() {
     receiving: 'Receiving file data', verifying: 'Verifying SHA-256 checksum', awaiting: 'Waiting for receiver integrity check',
     complete: 'SHA-256 verified — transfer complete',
   };
-  const canOffer = status === 'connected' && !!selected && !outbound.current && !inbound.current && !['hashing','sending','verifying','awaiting'].includes(transfer);
+  const canOffer = status === 'connected' && selected.length > 0 && !batch.current && !outbound.current && !inbound.current && !['hashing','sending','verifying','awaiting','offered'].includes(transfer);
   const [copied, setCopied] = useState<'code' | 'link' | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -462,13 +546,13 @@ function App() {
   return <div className="app comic-app">
     <div className="page-confetti" aria-hidden="true"><i/><i/><i/><i/><i/><i/></div>
     <header className="top">
-      <a className="brand" href="/" aria-label="DropMesh home">
+      <a className="brand" href="/" aria-label="dropmess home">
         <span className="brandmark"><Link2 size={27} strokeWidth={3}/></span>
-        <span className="wordmark">drop<span>mesh</span><small>PEER TO PEER · ZERO FLUFF</small></span>
+        <span className="wordmark">drop<span>mess</span><small>PEER TO PEER · ZERO FLUFF</small></span>
       </a>
       <nav className="topright" aria-label="Main navigation">
         <span className="header-note"><span className="online-dot"/> THE LITTLE FILE-TRANSFER MACHINE</span>
-        <span className="version">V0.3 <Star size={13} fill="currentColor"/></span>
+        <span className="version">V0.4 <Star size={13} fill="currentColor"/></span>
       </nav>
     </header>
 
@@ -519,7 +603,7 @@ function App() {
                 <div className="roomcode"><span>{room}</span><button aria-label="Copy pairing code" title="Copy pairing code" onClick={() => void copyValue(room, 'code')}>{copied === 'code' ? <Check size={22}/> : <Copy size={22}/>}</button></div>
                 <div className="secret-hint"><Clock3 size={15}/> Waiting rooms expire after 10 minutes.</div></>}
               {room && qr && <div className="qr-pair">
-                <button className="qr-image-button" type="button" onClick={() => setQrOpen(true)} aria-label="Enlarge the pairing QR code"><img src={qr} alt="DropMesh pairing QR code" width="144" height="144"/><span><ScanLine size={14}/> ENLARGE</span></button>
+                <button className="qr-image-button" type="button" onClick={() => setQrOpen(true)} aria-label="Enlarge the pairing QR code"><img src={qr} alt="dropmess pairing QR code" width="144" height="144"/><span><ScanLine size={14}/> ENLARGE</span></button>
                 <div className="qr-instructions"><span className="qr-sticker">SCAN ME!</span><strong><Smartphone size={16}/> Add your second device</strong><p>Scan the QR to fill the code, then tap Join. For phones, you'll need a deployed HTTPS URL.</p><button className="copy-link" onClick={() => void copyValue(pairLink, 'link')}>{copied === 'link' ? <Check size={15}/> : <Copy size={15}/>} {copied === 'link' ? 'COPIED!' : 'COPY INVITE LINK'}</button></div>
               </div>}
               <div className={'connection ' + (status === 'connected' ? 'connected' : '')}><span className="statusdot"/><div><strong>{status === 'connected' ? 'KAPOW! Devices are linked.' : statusLabels[status]}</strong><small>{status === 'connected' ? 'Your peer-to-peer channel is ready to send.' : 'Keep this tab open while pairing.'}</small></div></div>
@@ -529,21 +613,34 @@ function App() {
 
           <section className="panel upload-panel" aria-label="Send a file">
             <div className="panel-topline"><span className="num">02 / SEND STUFF</span><span className="panel-doodle">✦</span></div>
-            <div className="paneltitle"><div><h3>Drop it like it's hot<span className="heading-dot">!</span></h3><p>Photos, PDFs, and more. Up to 100 MiB per file.</p></div><div className="icon-burst upload-burst"><FileUp size={28}/></div></div>
+            <div className="paneltitle"><div><h3>Drop it like it's hot<span className="heading-dot">!</span></h3><p>Send up to 20 files in one batch. Each needs receiver approval.</p></div><div className="icon-burst upload-burst"><FileUp size={28}/></div></div>
             <div className={'drop ' + (dragActive ? 'drag-active ' : '') + (status === 'connected' ? 'enabled' : '')}
               onDragEnter={e => { e.preventDefault(); setDragActive(true); }}
               onDragOver={e => { e.preventDefault(); setDragActive(true); }}
               onDragLeave={e => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragActive(false); }}
-              onDrop={e => {e.preventDefault();setDragActive(false);chooseFile(e.dataTransfer.files[0] || null);}}
+              onDrop={e => {e.preventDefault();setDragActive(false);chooseFiles(Array.from(e.dataTransfer.files));}}
               onClick={() => fileInput.current?.click()} role="button" tabIndex={0}
               onKeyDown={e => {if (e.key === 'Enter' || e.key === ' ') { e.preventDefault();fileInput.current?.click(); }}}
-              aria-label={selected ? `Selected ${selected.name}, click to change` : 'Choose a file to send'}>
-              <input ref={fileInput} type="file" hidden onChange={e => chooseFile(e.target.files?.[0] || null)}/>
+              aria-label={selected.length ? `${selected.length} selected files, click to change` : 'Choose files to send'}>
+              <input ref={fileInput} type="file" multiple hidden onChange={e => {
+                chooseFiles(Array.from(e.target.files || []));
+                e.target.value = '';
+              }}/>
               <div className="drop-illustration"><span className="drop-rays">✳</span><FolderOpen size={44} strokeWidth={2}/><span className="drop-plus">+</span></div>
-              {selected ? <><strong className="filename">{selected.name}</strong><span className="drop-sub">{humanSize(selected.size)} · CLICK TO SWITCH FILE</span></> : <><strong>{dragActive ? 'LET IT DROP!' : 'DRAG & DROP IT HERE'}</strong><span className="drop-sub">or click to pick your file</span></>}
+              {selected.length ? <><strong className="filename">{selected.length} FILES SELECTED</strong><span className="drop-sub">{humanSize(selected.reduce((sum, file) => sum + file.size, 0))} · CLICK TO CHANGE</span></> : <><strong>{dragActive ? 'LET IT DROP!' : 'DRAG & DROP FILES HERE'}</strong><span className="drop-sub">or click to pick multiple files</span></>}
             </div>
-            <div className="filebottom"><span><ShieldCheck size={17}/> SHA-256 integrity check</span><span>LIMIT: 100 MiB</span></div>
-            <button className="sendbtn comic-button" onClick={() => void offerFile()} disabled={!canOffer}><span><Send size={19}/> {uploadBusy ? 'TRANSFER IN PROGRESS…' : 'SEND & VERIFY'}</span><ArrowRight size={21}/></button>
+            {selected.length > 0 && <div className="batch-selected" aria-label="Files ready to send">
+              {selected.map((file, index) => <div key={index}><span>{index + 1}. {file.name}</span><span>{humanSize(file.size)}</span></div>)}
+            </div>}
+            <div className="filebottom"><span><ShieldCheck size={17}/> SHA-256 per file</span><span>20 files · 200 MiB total · 100 MiB each</span></div>
+            <button className="sendbtn comic-button" onClick={offerFiles} disabled={!canOffer}><span><Send size={19}/> {uploadBusy || batch.current ? 'BATCH IN PROGRESS…' : 'SEND FILES & VERIFY'}</span><ArrowRight size={21}/></button>
+            {queueRows.length > 0 && <div className="batch-results" aria-label="File transfer queue">
+              <strong>TRANSFER QUEUE — {queueRows.filter(row => row.stage === 'verified').length}/{queueRows.length} VERIFIED</strong>
+              {queueRows.map((row, index) => <div className="batch-row" key={index}>
+                <span className="batch-name">{row.name}</span>
+                <span>{row.stage.toUpperCase()} {row.progress ? row.progress + '%' : ''}</span>
+              </div>)}
+            </div>}
             {status !== 'connected' && <p className="file-hint">Psst! Connect another device first to unlock sending.</p>}
           </section>
         </div>
@@ -552,7 +649,15 @@ function App() {
           <div className="progressHead"><div><span className="micro-label">{transfer === 'complete' ? 'MISSION COMPLETE ✳' : 'CURRENT MISSION'}</span><strong>{transferLabels[transfer]}</strong></div><span className="progressNum">{progress}%</span></div>
           <div className="progressBar" role="progressbar" aria-label="Transfer progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: progress + '%' }}/></div>
           {verifiedDigest && <p className="digest">SHA-256 <code>{verifiedDigest}</code></p>}
-          {received && <a href={received.url} download={received.name} className="download"><Download size={19}/> DOWNLOAD {received.name} <ArrowRight size={18}/></a>}
+
+        </section>}
+        {receivedFiles.length > 0 && <section className="batch-results received-results" aria-label="Verified received files">
+          <strong>VERIFIED DOWNLOADS — {receivedFiles.length} FILE{receivedFiles.length === 1 ? '' : 'S'}</strong>
+          {receivedFiles.map(file => <div className="batch-row" key={file.id}>
+            <span className="batch-name">{file.name} ({humanSize(file.size)})</span>
+            <a href={file.url} download={file.name} className="batch-download"><Download size={16}/> Download</a>
+          </div>)}
+          <p>Every file shown passed its own SHA-256 and size check.</p>
         </section>}
         {error && <div className="error" role="alert"><AlertTriangle size={20}/><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><X size={18}/></button></div>}
         <div className="safety-line"><ShieldCheck size={17}/><span>Built for file integrity, not identity verification. Share only with someone you trust.</span><button type="button" onClick={() => setShowHelp(!showHelp)} aria-expanded={showHelp}>HOW SAFE IS IT? <ChevronDown size={15}/></button></div>
@@ -574,7 +679,7 @@ function App() {
       </section>
     </main>
 
-    <footer><span className="footer-brand">DROP<span>MESH</span> <span className="footer-star">✳</span></span><span>MADE TO MOVE FILES, NOT COLLECT THEM.</span><span>v0.3 · BETA · NO IDENTITY VERIFICATION</span></footer>
+    <footer><span className="footer-brand">DROP<span>MESS</span> <span className="footer-star">✳</span></span><span>MADE TO MOVE FILES, NOT COLLECT THEM.</span><span>v0.4 · BETA · NO IDENTITY VERIFICATION</span></footer>
 
     {qrOpen && qr && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setQrOpen(false); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-label="Enlarged QR pairing code"><div className="modal-header"><span>SCAN TO JOIN!</span><button onClick={() => setQrOpen(false)} aria-label="Close QR code"><X size={21}/></button></div><img src={qr} alt="Large QR code for pairing"/><p>Anyone with this code can attempt to join. Only share privately.</p><button className="mainbtn comic-button" onClick={() => void copyValue(pairLink, 'link')}>{copied === 'link' ? <Check size={19}/> : <Copy size={19}/>} {copied === 'link' ? 'LINK COPIED!' : 'COPY INVITE LINK'}</button></div>

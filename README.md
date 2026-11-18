@@ -1,6 +1,8 @@
-# DropMesh v0.3.1 — Comic UI + deployment preparation
+> **Branding:** This v0.4 branch uses **dropmess** as the public-facing name. The GitHub repository and internal package still say `dropmesh` to preserve build and protocol compatibility until a separate rename is approved.
 
-A playful but functional browser-to-browser file-transfer MVP. **v0.3 redesigns the interface only**: room pairing, QR joins, direct WebRTC file transfer, receiver approval, and SHA-256 integrity verification are inherited from the working v0.2 code. This release does **not** add multi-file transfer, resume, TURN relays, authenticated identity, or a public deployment.
+# dropmess v0.4 — Multi-file prototype (feature branch)
+
+A playful but functional browser-to-browser file-transfer MVP. **v0.3 redesigns the interface only**: room pairing, QR joins, direct WebRTC file transfer, receiver approval, and SHA-256 integrity verification are inherited from the working v0.2 code. The v0.4 feature branch adds multi-file selection and a sequential per-file approval and verification queue. It does **not** add resume, TURN relays, authenticated identity, or a public deployment.
 
 ## What's new in the interface
 
@@ -64,3 +66,14 @@ See `SECURITY.md` for release gating.
 - GitHub Actions switches to reproducible `npm ci` once the lockfile has been generated and committed on your Mac.
 - Added production configuration example and preflight validation command.
 
+
+## dropmess v0.4 multi-file queue
+
+- Select or drag/drop up to **20 files**; maximum **100 MiB per file** and **200 MiB total per batch**.
+- Files are offered one by one over the existing peer-to-peer WebRTC channel, following signaling and QR pairing.
+- Each incoming file requires **individual receiver approval or rejection**.
+- Each accepted file gets independent SHA-256 and size verification. The sender advances only after the receiver reports verification; a rejection skips that item, a checksum failure stops the batch.
+- Each verified receiver-side file remains available as a separate download link until the pairing session is reset.
+- No ZIP bundle, resume, multi-peer relay, encrypted identity verification, or streaming beyond the existing limits.
+- **Manual smoke test:** run `npm run signal` and `npm run dev`, pair two tabs, select three harmless files including a zero-byte file, approve the first, reject the second, approve the third, verify the two downloadable files, then disconnect mid-transfer and confirm unfinished queue rows fail.
+- Do not deploy this branch or claim production security until a live browser demonstration, updated dependency audit and independent validation have passed.
